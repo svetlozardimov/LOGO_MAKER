@@ -1,17 +1,19 @@
 
 import React, { useState, useRef, useCallback } from 'react';
-import { Download, RefreshCw, Wand2, Palette, Type, Settings2, Layout } from 'lucide-react';
+import { Download, RefreshCw, Wand2, Palette, Type, Settings2, Layout, Grid, ArrowRight } from 'lucide-react';
 import { DEFAULT_LOGO_CONFIG, FONT_OPTIONS } from './constants';
 import { LogoConfig, DownloadFormat } from './types';
 import { LogoRenderer } from './components/LogoRenderer';
-import { generateLogoModification } from './services/geminiService';
+import { generateLogoModification, generateLogoVariations } from './services/geminiService';
 
 export default function App() {
   const [config, setConfig] = useState<LogoConfig>(DEFAULT_LOGO_CONFIG);
+  const [variations, setVariations] = useState<LogoConfig[]>([]);
   const [prompt, setPrompt] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
+  const variationsRef = useRef<HTMLDivElement>(null);
 
   const handleDownload = useCallback((format: DownloadFormat) => {
     const svgElement = svgRef.current;
@@ -58,14 +60,28 @@ export default function App() {
     }
   }, [config]);
 
-  const handleAIGenerate = async () => {
-    if (!prompt.trim()) return;
+  const handleAIGenerate = async (mode: 'single' | 'variations') => {
+    // Allow empty prompt for variations (implies "vary current style")
+    const effectivePrompt = prompt.trim() || (mode === 'variations' ? "Generate 10 distinct creative variations of the current logo style." : "");
+
+    if (!effectivePrompt) return;
     
     setIsGenerating(true);
     setError(null);
     try {
-      const newConfig = await generateLogoModification(config, prompt);
-      setConfig(newConfig);
+      if (mode === 'single') {
+        const newConfig = await generateLogoModification(config, effectivePrompt);
+        setConfig(newConfig);
+      } else {
+        // Request 10 variations as requested by the user
+        const newVariations = await generateLogoVariations(config, effectivePrompt, 10);
+        setVariations(newVariations);
+        
+        // Scroll to variations after a short delay to allow rendering
+        setTimeout(() => {
+          variationsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 100);
+      }
     } catch (err) {
       console.error(err);
       setError("Could not generate logo. Please check your API key or try a different prompt.");
@@ -76,8 +92,14 @@ export default function App() {
 
   const handleReset = () => {
     setConfig(DEFAULT_LOGO_CONFIG);
+    setVariations([]);
     setPrompt('');
     setError(null);
+  };
+
+  const applyVariation = (varConfig: LogoConfig) => {
+    setConfig(varConfig);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   return (
@@ -126,11 +148,43 @@ export default function App() {
               </button>
             </div>
           </div>
+
+          {/* Variations Gallery */}
+          {variations.length > 0 && (
+            <div ref={variationsRef} className="bg-gray-800/30 border border-gray-700 rounded-2xl p-6 scroll-mt-24">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-bold flex items-center gap-2 text-gray-200">
+                  <Grid size={20} className="text-purple-400" />
+                  Generated Variations
+                </h3>
+                <span className="text-xs text-gray-500">Click to apply</span>
+              </div>
+              
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                {variations.map((v, i) => (
+                  <div 
+                    key={i}
+                    onClick={() => applyVariation(v)}
+                    className="group relative aspect-[2/1] bg-gray-900 rounded-lg overflow-hidden border border-gray-700 hover:border-purple-500 cursor-pointer transition-all hover:shadow-lg hover:shadow-purple-500/10"
+                  >
+                    <div className="absolute inset-0 p-2">
+                      <LogoRenderer config={v} width={200} height={100} className="w-full h-full" />
+                    </div>
+                    <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                      <span className="text-white font-semibold text-xs flex items-center gap-1">
+                        Apply <ArrowRight size={12} />
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           
            <div className="bg-blue-900/20 border border-blue-800/50 rounded-xl p-4 text-blue-200 text-sm flex items-start space-x-3">
               <span className="text-xl">💡</span>
               <p>
-                Customize fonts and spacing below or use AI to experiment with new styles.
+                Try prompting for "Lighter background and dark text" or "Modern blue theme" to see variations.
               </p>
            </div>
         </section>
@@ -148,30 +202,46 @@ export default function App() {
               <textarea
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
-                placeholder="e.g. 'Change font to Times New Roman and increase gap between Dimo and V'..."
+                placeholder="e.g. 'light theme with serif font' (optional for variations)"
                 className="w-full bg-gray-900 border border-gray-700 rounded-xl p-3 text-gray-200 focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all resize-none h-24 text-sm"
               />
-              <button
-                onClick={handleAIGenerate}
-                disabled={isGenerating || !prompt.trim()}
-                className={`w-full py-3 rounded-xl font-semibold transition-all flex items-center justify-center space-x-2 ${
-                  isGenerating 
-                    ? 'bg-gray-700 cursor-not-allowed text-gray-400'
-                    : 'bg-purple-600 hover:bg-purple-700 text-white shadow-lg hover:shadow-purple-600/20 active:scale-95'
-                }`}
-              >
-                {isGenerating ? (
-                  <>
-                    <RefreshCw className="animate-spin" size={18} />
-                    <span>Thinking...</span>
-                  </>
-                ) : (
-                  <>
-                    <Wand2 size={18} />
-                    <span>Generate Variations</span>
-                  </>
-                )}
-              </button>
+              
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => handleAIGenerate('single')}
+                  disabled={isGenerating || !prompt.trim()}
+                  className={`py-3 rounded-xl font-semibold transition-all flex items-center justify-center space-x-2 text-sm ${
+                    isGenerating || !prompt.trim()
+                      ? 'bg-gray-700 cursor-not-allowed text-gray-400'
+                      : 'bg-gray-700 hover:bg-gray-600 text-white border border-gray-600'
+                  }`}
+                >
+                  {isGenerating ? (
+                    <RefreshCw className="animate-spin" size={16} />
+                  ) : (
+                    <Wand2 size={16} />
+                  )}
+                  <span>Modify One</span>
+                </button>
+
+                <button
+                  onClick={() => handleAIGenerate('variations')}
+                  disabled={isGenerating}
+                  className={`py-3 rounded-xl font-semibold transition-all flex items-center justify-center space-x-2 text-sm ${
+                    isGenerating 
+                      ? 'bg-gray-700 cursor-not-allowed text-gray-400'
+                      : 'bg-purple-600 hover:bg-purple-700 text-white shadow-lg hover:shadow-purple-600/20 active:scale-95'
+                  }`}
+                >
+                  {isGenerating ? (
+                    <RefreshCw className="animate-spin" size={16} />
+                  ) : (
+                    <Grid size={16} />
+                  )}
+                  <span>Get 10 Variations</span>
+                </button>
+              </div>
+
               {error && (
                 <p className="text-red-400 text-xs mt-2">{error}</p>
               )}
